@@ -1,0 +1,4 @@
+redshift_connector
+pandas
+numpy
+python-dotenv
