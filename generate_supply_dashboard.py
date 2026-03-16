@@ -1431,7 +1431,8 @@ function changePillHtml(val) {{
 
 function yAxisCallback(value) {{
     if (Math.abs(value) >= 1000000) return (value / 1000000).toFixed(1) + 'M';
-    if (Math.abs(value) >= 1000) return (value / 1000).toFixed(0) + 'K';
+    if (Math.abs(value) >= 10000) return (value / 1000).toFixed(0) + 'K';
+    if (Math.abs(value) >= 1000) return (value / 1000).toFixed(1) + 'K';
     return value;
 }}
 
@@ -2471,55 +2472,206 @@ function renderVPCharts() {{
 
 // ── Insights ──
 function renderInsights(buckets) {{
+    const insights = [];
+    const pLabel = periodLabel();
+
+    // Determine last complete bucket and previous bucket
+    let lastIdx = buckets.length - 1;
+    if (isWtd(buckets[lastIdx]) && buckets.length >= 2) lastIdx = buckets.length - 2;
+    const lastBucket = buckets[lastIdx];
+    const prevBucket = lastIdx > 0 ? buckets[lastIdx - 1] : null;
+
+    // ── Aggregations ──
+    const eng = aggregateEngagement(RAW.engagement_all);
+    const osMap = aggregateOS(RAW.os_weekly);
+    const mdMap = aggregateMD(RAW.md_weekly);
+    const delByCh = aggregateDeliveriesByChannel(RAW.engagement_all);
+    const engByType = aggregateEngByGroup(RAW.engagement_by_type, 'campaign_type');
+    const osByType = aggregateOSByGroup(RAW.os_by_type, 'campaign_type');
     const engByDetail = aggregateEngByGroup(RAW.engagement_detail, 'campaign_detail');
     const osByDetail = aggregateOSByGroup(RAW.os_detail, 'campaign_detail');
 
-    let lastBucket = buckets[buckets.length - 1];
-    if (isWtd(lastBucket) && buckets.length >= 2) lastBucket = buckets[buckets.length - 2];
+    const eLast = eng.get(lastBucket) || {{deliveries:0, opens:0, clicks:0}};
+    const ePrev = prevBucket ? (eng.get(prevBucket) || {{deliveries:0, opens:0, clicks:0}}) : null;
+    const osLast = osMap.get(lastBucket) || 0;
+    const osPrev = prevBucket ? (osMap.get(prevBucket) || 0) : null;
+    const dcLast = delByCh.get(lastBucket) || {{wa_del:0, email_del:0}};
+    const dcPrev = prevBucket ? (delByCh.get(prevBucket) || {{wa_del:0, email_del:0}}) : null;
 
-    const allGroups = new Set([...engByDetail.keys(), ...osByDetail.keys()]);
-    const items = [];
-    allGroups.forEach(g => {{
-        const engMap = engByDetail.get(g) || new Map();
-        const osMapG = osByDetail.get(g) || new Map();
-        const eLast = engMap.get(lastBucket) || {{deliveries:0, opens:0, clicks:0}};
-        const osLast = osMapG.get(lastBucket) || 0;
-        const osPer1k = eLast.deliveries > 0 ? (osLast / eLast.deliveries) * 1000 : 0;
-        items.push({{ name: g, deliveries: eLast.deliveries, os: osLast, osPer1k }});
-    }});
+    // Compute CPOS
+    function calcCost(dc) {{
+        let c = 0;
+        if (STATE.channel === 'whatsapp' || STATE.channel === 'both') c += dc.wa_del * RAW.wa_cost;
+        if (STATE.channel === 'email' || STATE.channel === 'both') c += dc.email_del * RAW.email_cost;
+        return c;
+    }}
+    const costLast = calcCost(dcLast);
+    const costPrev = dcPrev ? calcCost(dcPrev) : null;
+    const cposLast = osLast > 0 ? costLast / osLast : null;
+    const cposPrev = osPrev && osPrev > 0 && costPrev !== null ? costPrev / osPrev : null;
 
-    const insights = [];
-    const significant = items.filter(i => i.deliveries >= 500 && i.os > 0);
-    if (significant.length > 0) {{
-        const top = significant.reduce((a, b) => a.osPer1k > b.osPer1k ? a : b);
-        insights.push({{ type: 'positive', text: `Best efficiency: ${{top.name}} with ${{top.osPer1k.toFixed(1)}} OS/1K Del (${{Math.round(top.os)}} OS)` }});
+    // CTR
+    const ctrLast = eLast.deliveries > 0 ? (eLast.clicks / eLast.deliveries) * 100 : null;
+    const ctrPrev = ePrev && ePrev.deliveries > 0 ? (ePrev.clicks / ePrev.deliveries) * 100 : null;
 
-        const low = significant.reduce((a, b) => a.osPer1k < b.osPer1k ? a : b);
-        if (low.name !== top.name) {{
-            insights.push({{ type: 'negative', text: `Lowest efficiency: ${{low.name}} with ${{low.osPer1k.toFixed(1)}} OS/1K Del (${{Math.round(low.os)}} OS)` }});
+    // MD
+    const mdLast = mdMap.get(lastBucket);
+    const mdPrev = prevBucket ? mdMap.get(prevBucket) : null;
+    const mdValLast = mdLast && mdLast.count > 0 ? mdLast.sum / mdLast.count : null;
+    const mdValPrev = mdPrev && mdPrev.count > 0 ? mdPrev.sum / mdPrev.count : null;
+
+    // CVR (OS/Del)
+    const cvrLast = eLast.deliveries > 0 ? (osLast / eLast.deliveries) * 100 : null;
+    const cvrPrev = ePrev && ePrev.deliveries > 0 && osPrev !== null ? (osPrev / ePrev.deliveries) * 100 : null;
+
+    // ═══ INSIGHT 1: OS volume WoW ═══
+    if (osPrev !== null && osPrev > 0) {{
+        const osWow = wowChange(osLast, osPrev);
+        const delWow = wowChange(eLast.deliveries, ePrev.deliveries);
+        const dir = osWow > 0 ? 'up' : 'down';
+        const type = osWow >= 0 ? 'positive' : 'negative';
+        const sign = osWow > 0 ? '+' : '';
+        let reason = '';
+        if (Math.abs(delWow) > 2) {{
+            const delDir = delWow > 0 ? 'more' : 'fewer';
+            reason = ` driven by ${{delDir}} deliveries (${{delWow > 0 ? '+' : ''}}${{delWow.toFixed(1)}}%)`;
         }}
+        insights.push({{ type, text: `OS volume ${{dir}} ${{sign}}${{osWow.toFixed(1)}}% ${{pLabel}} (${{fmtNum(osLast)}} vs ${{fmtNum(osPrev)}})${{reason}}` }});
+    }}
 
-        const topOS = items.reduce((a, b) => a.os > b.os ? a : b);
-        if (topOS.os > 0) {{
-            insights.push({{ type: 'info', text: `Highest volume: ${{topOS.name}} with ${{Math.round(topOS.os)}} OS this period` }});
+    // ═══ INSIGHT 2: Biggest campaign_type OS movers (exclude Triggered) ═══
+    if (prevBucket) {{
+        const typeItems = [];
+        const allTypes = new Set([...engByType.keys(), ...osByType.keys()]);
+        allTypes.forEach(t => {{
+            if (t === 'Triggered') return;  // skip triggered
+            const osT = osByType.get(t) || new Map();
+            const osNow = osT.get(lastBucket) || 0;
+            const osBefore = osT.get(prevBucket) || 0;
+            const delta = osNow - osBefore;
+            if (Math.abs(delta) > 0) typeItems.push({{ name: t, osNow, osBefore, delta }});
+        }});
+        typeItems.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+        const movers = typeItems.slice(0, 2).filter(t => Math.abs(t.delta) >= 5);
+        if (movers.length > 0) {{
+            const parts = movers.map(m => {{
+                const sign = m.delta > 0 ? '+' : '';
+                return `${{m.name}} ${{sign}}${{Math.round(m.delta)}} OS`;
+            }});
+            insights.push({{ type: 'info', text: `Biggest ${{pLabel}} movers: ${{parts.join(', ')}}` }});
         }}
     }}
 
-    // Total engagement check
-    const eng = aggregateEngagement(RAW.engagement_all);
-    const lastEng = eng.get(lastBucket);
-    if (lastEng) {{
-        const totalDel = lastEng.deliveries;
-        insights.push({{ type: 'info', text: `Total ${{channelLabel()}} deliveries this period: ${{fmtNum(totalDel)}}` }});
+    // ═══ INSIGHT 3: Top campaign_detail OS drivers (exclude Triggered patterns) ═══
+    {{
+        const detailItems = [];
+        const allDetails = new Set([...engByDetail.keys(), ...osByDetail.keys()]);
+        allDetails.forEach(d => {{
+            const osD = osByDetail.get(d) || new Map();
+            const engD = engByDetail.get(d) || new Map();
+            const osNow = osD.get(lastBucket) || 0;
+            const osBefore = prevBucket ? (osD.get(prevBucket) || 0) : 0;
+            const eNow = engD.get(lastBucket) || {{deliveries:0}};
+            if (eNow.deliveries >= 300 && osNow > 0) {{
+                detailItems.push({{ name: d, os: osNow, delta: osNow - osBefore, deliveries: eNow.deliveries }});
+            }}
+        }});
+        // Top OS drivers
+        detailItems.sort((a, b) => b.os - a.os);
+        const topDrivers = detailItems.slice(0, 3);
+        if (topDrivers.length > 0) {{
+            const parts = topDrivers.map(d => `${{d.name}} (${{Math.round(d.os)}} OS)`);
+            insights.push({{ type: 'positive', text: `Top OS drivers: ${{parts.join(', ')}}` }});
+        }}
+        // Biggest drop
+        if (prevBucket) {{
+            detailItems.sort((a, b) => a.delta - b.delta);
+            const dropped = detailItems.filter(d => d.delta < -10);
+            if (dropped.length > 0) {{
+                const worst = dropped[0];
+                insights.push({{ type: 'negative', text: `Notable drop: ${{worst.name}} lost ${{Math.abs(Math.round(worst.delta))}} OS ${{pLabel}} (${{Math.round(worst.os + Math.abs(worst.delta))}} → ${{Math.round(worst.os)}})` }});
+            }}
+        }}
     }}
 
+    // ═══ INSIGHT 4: MD effect ═══
+    if (mdValLast !== null) {{
+        let mdText = `MD: ${{mdValLast.toFixed(1)}}%`;
+        if (mdValPrev !== null) {{
+            const mdDelta = mdValLast - mdValPrev;
+            if (Math.abs(mdDelta) >= 0.3) {{
+                const mdDir = mdDelta > 0 ? 'up' : 'down';
+                mdText += ` (${{mdDir}} ${{Math.abs(mdDelta).toFixed(1)}}pp ${{pLabel}})`;
+                if (cvrLast !== null && cvrPrev !== null) {{
+                    const cvrDelta = cvrLast - cvrPrev;
+                    if (Math.abs(cvrDelta) >= 0.01) {{
+                        const cvrDir = cvrDelta > 0 ? 'up' : 'down';
+                        mdText += ` — CVR ${{cvrDir}} ${{Math.abs(cvrDelta).toFixed(2)}}pp`;
+                    }}
+                }}
+            }}
+        }}
+        const mdType = mdValPrev !== null && mdValLast > mdValPrev ? 'positive' : mdValPrev !== null && mdValLast < mdValPrev ? 'negative' : 'info';
+        insights.push({{ type: mdType, text: mdText }});
+    }}
+
+    // ═══ INSIGHT 5: CPOS + CTR ═══
+    {{
+        const parts = [];
+        if (cposLast !== null) {{
+            let cpText = `CPOS ${{fmtMoney(cposLast)}}`;
+            if (cposPrev !== null) {{
+                const cposChg = wowChange(cposLast, cposPrev);
+                if (cposChg !== null && Math.abs(cposChg) >= 2) {{
+                    cpText += ` (${{cposChg > 0 ? '+' : ''}}${{cposChg.toFixed(1)}}% ${{pLabel}})`;
+                }}
+            }}
+            parts.push(cpText);
+        }}
+        if (ctrLast !== null) {{
+            let ctrText = `CTR ${{ctrLast.toFixed(2)}}%`;
+            if (ctrPrev !== null) {{
+                const ctrDelta = ctrLast - ctrPrev;
+                if (Math.abs(ctrDelta) >= 0.02) {{
+                    ctrText += ` (${{ctrDelta > 0 ? '+' : ''}}${{ctrDelta.toFixed(2)}}pp ${{pLabel}})`;
+                }}
+            }}
+            parts.push(ctrText);
+        }}
+        if (parts.length > 0) {{
+            const cposDir = cposPrev !== null && cposLast !== null ? (cposLast < cposPrev ? 'positive' : cposLast > cposPrev ? 'negative' : 'info') : 'info';
+            insights.push({{ type: cposDir, text: parts.join(' · ') }});
+        }}
+    }}
+
+    // ═══ INSIGHT 6: Next steps ═══
+    {{
+        const actions = [];
+        // If CPOS went up, suggest review
+        if (cposLast !== null && cposPrev !== null && cposLast > cposPrev * 1.10) {{
+            actions.push('review high-cost campaigns to reduce CPOS');
+        }}
+        // If OS dropped, suggest checking volume drivers
+        if (osPrev !== null && osLast < osPrev * 0.90) {{
+            actions.push('investigate OS drop — check if volume or efficiency changed');
+        }}
+        // If CTR dropped significantly
+        if (ctrLast !== null && ctrPrev !== null && ctrLast < ctrPrev - 0.1) {{
+            actions.push('CTR dropped — review creatives and messaging');
+        }}
+        // If MD improved but CVR didn't follow
+        if (mdValLast !== null && mdValPrev !== null && mdValLast > mdValPrev + 0.5 && cvrLast !== null && cvrPrev !== null && cvrLast <= cvrPrev) {{
+            actions.push('MD improved but CVR flat — check if supply quality is matching demand');
+        }}
+        if (actions.length > 0) {{
+            insights.push({{ type: 'info', text: `Next steps: ${{actions.join('; ')}}` }});
+        }}
+    }}
+
+    // ── Render ──
     const section = document.getElementById('insights-section');
     const grid = document.getElementById('insights-grid');
-
-    if (insights.length === 0) {{
-        section.style.display = 'none';
-        return;
-    }}
+    if (insights.length === 0) {{ section.style.display = 'none'; return; }}
     section.style.display = '';
     grid.innerHTML = insights.map(i =>
         `<div class="insight ${{i.type}}">${{i.text}}</div>`
