@@ -19,12 +19,11 @@ Usage: python generate_supply_dashboard.py
 """
 
 import sys
-import pathlib
-# Allow importing query_runner from same directory as this script
-sys.path.insert(0, str(pathlib.Path(__file__).parent))
+sys.path.insert(0, '/Users/mateolundahl/.claude/skills/kavak-analytics')
 
 import json
 import os
+import pathlib
 from datetime import datetime, timedelta
 import webbrowser
 
@@ -33,7 +32,6 @@ import numpy as np
 from query_runner import execute_query
 
 # ─── Configuration ───────────────────────────────────────────────────────────
-# Output next to the script itself (works from any machine)
 OUTPUT_PATH = str(pathlib.Path(__file__).parent / "index.html")
 NUM_WEEKS = 26
 WA_COST_MXN = 0.40
@@ -269,32 +267,40 @@ ORDER BY 1
 
 # Q8: saturation_frequency — WA frequency distribution for Pulse audience per week
 # With pulse_type dimension for client-side filtering
+# Optimized: pre-filter campaigns with date range and use INNER JOIN in wa_sends
 QUERIES['saturation_frequency'] = f"""
-WITH pulse_users AS (
+WITH date_bounds AS (
+    SELECT
+        DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '{SATURATION_WEEKS} weeks' AS start_dt,
+        DATE_TRUNC('week', CURRENT_DATE) AS end_dt
+),
+pulse_users AS (
     SELECT DISTINCT
         DATE_TRUNC('week', p.pulse_date)::DATE AS pulse_week,
         p.pulse_type,
         c.cdp_customer_id
     FROM playground.pulse_details p
     JOIN cdp_global_serving.customer c ON p.olimpo_id::VARCHAR = c.legacy_id::VARCHAR
+    CROSS JOIN date_bounds d
     WHERE p.country_code = 'MX'
-      AND p.pulse_date >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '{SATURATION_WEEKS} weeks'
-      AND p.pulse_date < DATE_TRUNC('week', CURRENT_DATE)
+      AND p.pulse_date >= d.start_dt
+      AND p.pulse_date < d.end_dt
 ),
 wa_sends AS (
     SELECT
-        pu.pulse_week,
+        DATE_TRUNC('week', cam.campaign_delivery_time)::DATE AS send_week,
         pu.pulse_type,
-        pu.cdp_customer_id,
+        cam.cdp_customer_id,
         COUNT(*) AS wa_count
-    FROM pulse_users pu
-    JOIN cdp_global_serving.crm_campaigns cam
-        ON pu.cdp_customer_id = cam.cdp_customer_id
-        AND cam.channel = 'whatsapp'
-        AND cam.delivered = TRUE
-        AND cam.campaign_delivery_time >= DATE_TRUNC('week', CURRENT_DATE) - INTERVAL '{SATURATION_WEEKS} weeks'
-        AND cam.campaign_delivery_time < DATE_TRUNC('week', CURRENT_DATE)
+    FROM cdp_global_serving.crm_campaigns cam
+    JOIN pulse_users pu
+        ON cam.cdp_customer_id = pu.cdp_customer_id
         AND DATE_TRUNC('week', cam.campaign_delivery_time)::DATE = pu.pulse_week
+    CROSS JOIN date_bounds d
+    WHERE cam.channel = 'whatsapp'
+      AND cam.delivered = TRUE
+      AND cam.campaign_delivery_time >= d.start_dt
+      AND cam.campaign_delivery_time < d.end_dt
     GROUP BY 1, 2, 3
 )
 SELECT
@@ -310,7 +316,7 @@ SELECT
 FROM pulse_users pu
 LEFT JOIN wa_sends ws
     ON pu.cdp_customer_id = ws.cdp_customer_id
-    AND pu.pulse_week = ws.pulse_week
+    AND pu.pulse_week = ws.send_week
     AND pu.pulse_type = ws.pulse_type
 GROUP BY 1, 2
 ORDER BY 1, 2
@@ -438,16 +444,31 @@ ORDER BY 1, 2
 # ─── Data Fetching ───────────────────────────────────────────────────────────
 
 def fetch_all_data():
-    """Execute all queries and return results as dict of DataFrames."""
+    """Execute all queries and return results as dict of DataFrames.
+    Retries failed queries up to 2 times with a 10s pause between attempts.
+    """
+    import time as _time
+    MAX_RETRIES = 2
     results = {}
     for name, query in QUERIES.items():
-        try:
-            print(f"  Running {name}...", flush=True)
-            df = execute_query(query)
-            results[name] = df
-            print(f"  OK {name}: {len(df)} rows", flush=True)
-        except Exception as e:
-            print(f"  FAIL {name}: {e}", flush=True)
+        last_err = None
+        for attempt in range(1 + MAX_RETRIES):
+            try:
+                prefix = f"  Running {name}..." if attempt == 0 else f"  Retrying {name} (attempt {attempt + 1})..."
+                print(prefix, flush=True)
+                df = execute_query(query)
+                results[name] = df
+                print(f"  OK {name}: {len(df)} rows", flush=True)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < MAX_RETRIES:
+                    print(f"  FAIL {name}: {e} — retrying in 10s...", flush=True)
+                    _time.sleep(10)
+                else:
+                    print(f"  FAIL {name} (gave up after {MAX_RETRIES + 1} attempts): {e}", flush=True)
+        if last_err is not None:
             results[name] = pd.DataFrame()
     return results
 
@@ -2560,6 +2581,14 @@ function openModal(chartType) {{
                 {{ label: 'OS ' + chLabel, data: osArr, borderColor: '#0467FC', borderWidth: 2.5, fill: true, backgroundColor: 'rgba(4,103,252,0.08)', yAxisID: 'y1', tension: 0.3 }}
             );
         }}
+        // Add MD% line (independent of channel filter)
+        const mdMap = aggregateMD(RAW.md_weekly);
+        const mdArr = [];
+        buckets.forEach(b => {{
+            const md = mdMap.get(b);
+            mdArr.push(md && md.count > 0 ? md.sum / md.count : null);
+        }});
+        datasets.push({{ label: 'MD%', data: mdArr, borderColor: '#A855F7', backgroundColor: 'transparent', borderWidth: 2, borderDash: [3,3], fill: false, yAxisID: 'y2', tension: 0.3, pointRadius: 3, pointBackgroundColor: '#A855F7' }});
         config = {{
             type: 'line',
             data: {{ labels, datasets }},
@@ -2569,6 +2598,7 @@ function openModal(chartType) {{
                     x: CHART_DEFAULTS.scales.x,
                     y: {{ ...CHART_DEFAULTS.scales.y, position: 'left', title: {{ display: true, text: 'Deliveries', color: 'rgba(255,255,255,0.4)', font: {{ size: 11 }} }} }},
                     y1: {{ ...CHART_DEFAULTS.scales.y, position: 'right', grid: {{ drawOnChartArea: false }}, title: {{ display: true, text: 'OS', color: 'rgba(255,255,255,0.4)', font: {{ size: 11 }} }} }},
+                    y2: {{ ...CHART_DEFAULTS.scales.y, position: 'right', grid: {{ drawOnChartArea: false }}, ticks: {{ ...CHART_DEFAULTS.scales.y.ticks, callback: yAxisCallbackPct }}, title: {{ display: true, text: 'MD%', color: '#A855F7', font: {{ size: 11 }} }} }},
                 }},
             }}
         }};
