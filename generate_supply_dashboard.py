@@ -878,6 +878,13 @@ td.efficiency {{
 .top-badge {{ background: rgba(0,196,140,0.2); color: var(--kavak-green); padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700; margin-left: 4px; }}
 .low-badge {{ background: rgba(255,71,87,0.2); color: var(--kavak-red); padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700; margin-left: 4px; }}
 
+/* ── Cell WoW context ── */
+td.wow-up {{ background: rgba(0,196,140,0.08); }}
+td.wow-down {{ background: rgba(255,71,87,0.08); }}
+td.wow-up-inv {{ background: rgba(255,71,87,0.08); }}  /* inverted: up is bad (CPOS, MD) */
+td.wow-down-inv {{ background: rgba(0,196,140,0.08); }}  /* inverted: down is good */
+td[data-wow] {{ cursor: default; position: relative; }}
+
 /* ── Insights ── */
 .insights-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }}
 .insight {{
@@ -1429,6 +1436,23 @@ function changePillHtml(val) {{
     return `<span class="change-pill ${{cls}}">${{sign}}${{val.toFixed(1)}}%</span>`;
 }}
 
+// Cell context: returns class + title for a metric cell based on WoW change
+// inverted=true for metrics where lower is better (CPOS, MD)
+// isPp=true for metrics where the change is in percentage points, not %
+function wowCellAttr(val, inverted, isPp) {{
+    if (val === null || val === undefined || val === 0) return '';
+    const sign = val > 0 ? '+' : '';
+    const unit = isPp ? 'pp' : '%';
+    const tip = `${{sign}}${{isPp ? val.toFixed(2) : val.toFixed(1)}}${{unit}} ${{periodLabel()}}`;
+    let cls;
+    if (inverted) {{
+        cls = val > 0 ? 'wow-up-inv' : 'wow-down-inv';
+    }} else {{
+        cls = val > 0 ? 'wow-up' : 'wow-down';
+    }}
+    return ` class="num ${{cls}}" title="${{tip}}" data-wow="${{val.toFixed(1)}}"`;
+}}
+
 function yAxisCallback(value) {{
     if (Math.abs(value) >= 1000000) return (value / 1000000).toFixed(1) + 'M';
     if (Math.abs(value) >= 10000) return (value / 1000).toFixed(0) + 'K';
@@ -1762,10 +1786,10 @@ function renderKPIs(buckets, labels) {{
         const vsAvgCls = vsAvg !== null ? (vsAvg > 0 ? 'positive' : vsAvg < 0 ? 'negative' : '') : '';
         const vsAvgStr = vsAvg !== null ? (vsAvg > 0 ? '+' : '') + vsAvg.toFixed(1) + '%' : '--';
 
-        // CPOS: invert color logic (lower is better)
+        // CPOS & MD: invert color logic (lower is better)
         let wowClsFinal = wowCls;
         let vsAvgClsFinal = vsAvgCls;
-        if (kpi.name === 'CPOS') {{
+        if (kpi.name === 'CPOS' || kpi.name === 'MD') {{
             wowClsFinal = wow !== null ? (wow < 0 ? 'positive' : wow > 0 ? 'negative' : '') : '';
             vsAvgClsFinal = vsAvg !== null ? (vsAvg < 0 ? 'positive' : vsAvg > 0 ? 'negative' : '') : '';
         }}
@@ -2056,6 +2080,13 @@ function renderCampaignTypeTable(buckets, labels) {{
         totalOS += osLast;
         totalPromo += (eLast.promo_deliveries || 0);
 
+        // Prev metrics for WoW
+        const prevOrPct = ePrev && ePrev.deliveries > 0 ? safePct(ePrev.opens, ePrev.deliveries) : null;
+        const prevCtrPct = ePrev && ePrev.deliveries > 0 ? safePct(ePrev.clicks, ePrev.deliveries) : null;
+        const prevCvrPct = ePrev && ePrev.deliveries > 0 && osPrev !== null ? safePct(osPrev, ePrev.deliveries) : null;
+        const prevOsPer1k = ePrev && ePrev.deliveries > 0 && osPrev !== null ? (osPrev / ePrev.deliveries) * 1000 : null;
+        const prevCpos = osPrev > 0 && ePrev ? (ePrev.deliveries * blendedCostPerDel) / osPrev : null;
+
         rows.push({{
             name: g,
             deliveries: eLast.deliveries,
@@ -2063,7 +2094,14 @@ function renderCampaignTypeTable(buckets, labels) {{
             orPct, clicks: eLast.clicks, ctrPct,
             os: osLast, cvrPct, osPer1k, cpos,
             pctOs: 0, promoPct,
+            // WoW for each metric
+            delWow: ePrev ? wowChange(eLast.deliveries, ePrev.deliveries) : null,
+            orWow: prevOrPct !== null ? (orPct - prevOrPct) : null,  // pp delta
+            ctrWow: prevCtrPct !== null ? (ctrPct - prevCtrPct) : null,  // pp delta
             osWow: osPrev !== null ? wowChange(osLast, osPrev) : null,
+            cvrWow: prevCvrPct !== null ? (cvrPct - prevCvrPct) : null,  // pp delta
+            effWow: prevOsPer1k !== null ? wowChange(osPer1k, prevOsPer1k) : null,
+            cposWow: prevCpos !== null && cpos !== null ? wowChange(cpos, prevCpos) : null,
             vsAvg: wowChange(osLast, avgOs),
             spark: buckets.map(b => {{
                 const e2 = engMap.get(b) || {{deliveries:0}};
@@ -2137,16 +2175,16 @@ function fillTypeBody(rows, totalDel, totalOpens, totalClicks, totalOS, totOrPct
         const promoBar = r.promoPct > 0 ? `<span style="display:inline-block;width:${{Math.min(r.promoPct, 100)}}%%;max-width:40px;height:3px;background:#FF9F43;border-radius:2px;vertical-align:middle;margin-left:3px"></span>` : '';
         html += `<tr>
             <td class="campaign-name"${{tipAttr}}>${{r.name}}</td>
-            <td class="num">${{fmtNum(r.deliveries)}}</td>
+            <td${{wowCellAttr(r.delWow, false, false)}}>${{fmtNum(r.deliveries)}}</td>
             <td class="num">${{r.promoPct > 0 ? fmtPct(r.promoPct) : '--'}}${{promoBar}}</td>
             <td class="num">${{fmtNum(r.opens)}}</td>
-            <td class="num">${{fmtPct(r.orPct)}}</td>
+            <td${{wowCellAttr(r.orWow, false, true)}}>${{fmtPct(r.orPct)}}</td>
             <td class="num">${{fmtNum(r.clicks)}}</td>
-            <td class="num">${{fmtPct(r.ctrPct)}}</td>
-            <td class="num">${{Math.round(r.os)}}</td>
-            <td class="num">${{fmtPct(r.cvrPct)}}</td>
-            <td class="num efficiency">${{fmtEff(r.osPer1k)}}</td>
-            <td class="num">${{r.cpos !== null ? fmtMoney(r.cpos) : '--'}}</td>
+            <td${{wowCellAttr(r.ctrWow, false, true)}}>${{fmtPct(r.ctrPct)}}</td>
+            <td${{wowCellAttr(r.osWow, false, false)}}>${{Math.round(r.os)}}</td>
+            <td${{wowCellAttr(r.cvrWow, false, true)}}>${{fmtPct(r.cvrPct)}}</td>
+            <td${{wowCellAttr(r.effWow, false, false)}} style="font-weight:800;color:var(--kavak-blue);font-size:12px">${{fmtEff(r.osPer1k)}}</td>
+            <td${{wowCellAttr(r.cposWow, true, false)}}>${{r.cpos !== null ? fmtMoney(r.cpos) : '--'}}</td>
             <td class="num">${{fmtPct(r.pctOs)}}</td>
             <td class="num">${{changePillHtml(r.osWow)}}</td>
             <td class="num">${{changePillHtml(r.vsAvg)}}</td>
@@ -2248,6 +2286,13 @@ function renderCampaignDetailTable(buckets, labels) {{
         totalOS += osLast;
         totalPromo += (eLast.promo_deliveries || 0);
 
+        // Prev metrics for WoW
+        const prevOrPct = ePrev && ePrev.deliveries > 0 ? safePct(ePrev.opens, ePrev.deliveries) : null;
+        const prevCtrPct = ePrev && ePrev.deliveries > 0 ? safePct(ePrev.clicks, ePrev.deliveries) : null;
+        const prevCvrPct = ePrev && ePrev.deliveries > 0 && osPrev !== null ? safePct(osPrev, ePrev.deliveries) : null;
+        const prevOsPer1k = ePrev && ePrev.deliveries > 0 && osPrev !== null ? (osPrev / ePrev.deliveries) * 1000 : null;
+        const prevCpos = osPrev > 0 && ePrev ? (ePrev.deliveries * blendedCostPerDel) / osPrev : null;
+
         rows.push({{
             name: g,
             deliveries: eLast.deliveries,
@@ -2255,7 +2300,13 @@ function renderCampaignDetailTable(buckets, labels) {{
             orPct, clicks: eLast.clicks, ctrPct,
             os: osLast, cvrPct, osPer1k, cpos,
             pctOs: 0, promoPct,
+            delWow: ePrev ? wowChange(eLast.deliveries, ePrev.deliveries) : null,
+            orWow: prevOrPct !== null ? (orPct - prevOrPct) : null,
+            ctrWow: prevCtrPct !== null ? (ctrPct - prevCtrPct) : null,
             osWow: osPrev !== null ? wowChange(osLast, osPrev) : null,
+            cvrWow: prevCvrPct !== null ? (cvrPct - prevCvrPct) : null,
+            effWow: prevOsPer1k !== null ? wowChange(osPer1k, prevOsPer1k) : null,
+            cposWow: prevCpos !== null && cpos !== null ? wowChange(cpos, prevCpos) : null,
             vsAvg: wowChange(osLast, avgOs),
             avgOs: avgOs,
         }});
@@ -2337,16 +2388,16 @@ function fillDetailBody(rows, totalDel, totalOpens, totalClicks, totalOS, totOrP
         const promoBar = r.promoPct > 0 ? `<span style="display:inline-block;width:${{Math.min(r.promoPct, 100)}}%%;max-width:40px;height:3px;background:#FF9F43;border-radius:2px;vertical-align:middle;margin-left:3px"></span>` : '';
         html += `<tr>
             <td class="campaign-name"${{detTipAttr}}>${{r.name}}${{badgeHtml}}</td>
-            <td class="num">${{fmtNum(r.deliveries)}}</td>
+            <td${{wowCellAttr(r.delWow, false, false)}}>${{fmtNum(r.deliveries)}}</td>
             <td class="num">${{r.promoPct > 0 ? fmtPct(r.promoPct) : '--'}}${{promoBar}}</td>
             <td class="num">${{fmtNum(r.opens)}}</td>
-            <td class="num">${{fmtPct(r.orPct)}}</td>
+            <td${{wowCellAttr(r.orWow, false, true)}}>${{fmtPct(r.orPct)}}</td>
             <td class="num">${{fmtNum(r.clicks)}}</td>
-            <td class="num">${{fmtPct(r.ctrPct)}}</td>
-            <td class="num">${{Math.round(r.os)}}</td>
-            <td class="num">${{fmtPct(r.cvrPct)}}</td>
-            <td class="num efficiency">${{fmtEff(r.osPer1k)}}</td>
-            <td class="num">${{r.cpos !== null ? fmtMoney(r.cpos) : '--'}}</td>
+            <td${{wowCellAttr(r.ctrWow, false, true)}}>${{fmtPct(r.ctrPct)}}</td>
+            <td${{wowCellAttr(r.osWow, false, false)}}>${{Math.round(r.os)}}</td>
+            <td${{wowCellAttr(r.cvrWow, false, true)}}>${{fmtPct(r.cvrPct)}}</td>
+            <td${{wowCellAttr(r.effWow, false, false)}} style="font-weight:800;color:var(--kavak-blue);font-size:12px">${{fmtEff(r.osPer1k)}}</td>
+            <td${{wowCellAttr(r.cposWow, true, false)}}>${{r.cpos !== null ? fmtMoney(r.cpos) : '--'}}</td>
             <td class="num">${{fmtPct(r.pctOs)}}</td>
             <td class="num">${{changePillHtml(r.osWow)}}</td>
             <td class="num">${{changePillHtml(r.vsAvg)}}</td>
@@ -2524,147 +2575,175 @@ function renderInsights(buckets) {{
     const cvrLast = eLast.deliveries > 0 ? (osLast / eLast.deliveries) * 100 : null;
     const cvrPrev = ePrev && ePrev.deliveries > 0 && osPrev !== null ? (osPrev / ePrev.deliveries) * 100 : null;
 
-    // ═══ INSIGHT 1: OS volume WoW ═══
+    // ── Helper: compute avg of last N periods for a value extractor ──
+    function avgOfBuckets(bkts, extractFn) {{
+        const vals = bkts.map(extractFn).filter(v => v !== null && v !== undefined && !isNaN(v));
+        return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    }}
+    const avgStart = Math.max(0, lastIdx - 8);
+    const histBuckets = buckets.slice(avgStart, lastIdx);  // up to 8 periods BEFORE current
+
+    // ═══ INSIGHT 1: OS volume — what changed and why ═══
     if (osPrev !== null && osPrev > 0) {{
         const osWow = wowChange(osLast, osPrev);
-        const delWow = wowChange(eLast.deliveries, ePrev.deliveries);
-        const dir = osWow > 0 ? 'up' : 'down';
+        const avgOs = avgOfBuckets(histBuckets, b => osMap.get(b) || 0);
+        const vsAvg = avgOs ? wowChange(osLast, avgOs) : null;
         const type = osWow >= 0 ? 'positive' : 'negative';
         const sign = osWow > 0 ? '+' : '';
-        let reason = '';
-        if (Math.abs(delWow) > 2) {{
-            const delDir = delWow > 0 ? 'more' : 'fewer';
-            reason = ` driven by ${{delDir}} deliveries (${{delWow > 0 ? '+' : ''}}${{delWow.toFixed(1)}}%)`;
+
+        // Decompose: is it volume-driven or efficiency-driven?
+        const delWow = ePrev ? wowChange(eLast.deliveries, ePrev.deliveries) : null;
+        const effLast = eLast.deliveries > 0 ? (osLast / eLast.deliveries) * 1000 : 0;
+        const effPrev = ePrev && ePrev.deliveries > 0 ? (osPrev / ePrev.deliveries) * 1000 : 0;
+        const effWow = effPrev > 0 ? wowChange(effLast, effPrev) : null;
+
+        let driver = '';
+        if (delWow !== null && effWow !== null) {{
+            if (Math.abs(delWow) > Math.abs(effWow) * 2) driver = ` — driven by send volume (${{delWow > 0 ? '+':''}}${{delWow.toFixed(0)}}% deliveries)`;
+            else if (Math.abs(effWow) > Math.abs(delWow) * 2) driver = ` — driven by efficiency (${{effWow > 0 ? '+':''}}${{effWow.toFixed(0)}}% OS/1K Del)`;
+            else if (Math.abs(delWow) > 3 && Math.abs(effWow) > 3) driver = ` — both volume (${{delWow > 0 ? '+':''}}${{delWow.toFixed(0)}}%) and efficiency (${{effWow > 0 ? '+':''}}${{effWow.toFixed(0)}}%)`;
         }}
-        insights.push({{ type, text: `OS volume ${{dir}} ${{sign}}${{osWow.toFixed(1)}}% ${{pLabel}} (${{fmtNum(osLast)}} vs ${{fmtNum(osPrev)}})${{reason}}` }});
+        let vsAvgNote = '';
+        if (vsAvg !== null && Math.abs(vsAvg) > 5) {{
+            vsAvgNote = ` | vs avg: ${{vsAvg > 0 ? '+':''}}${{vsAvg.toFixed(0)}}%`;
+        }}
+        insights.push({{ type, text: `OS ${{sign}}${{osWow.toFixed(1)}}% ${{pLabel}} (${{fmtNum(osLast)}} vs ${{fmtNum(osPrev)}})${{driver}}${{vsAvgNote}}` }});
     }}
 
-    // ═══ INSIGHT 2: Biggest campaign_type OS movers (exclude Triggered) ═══
-    if (prevBucket) {{
-        const typeItems = [];
+    // ═══ INSIGHT 2: Volume anomalies by campaign_type (exclude Triggered) ═══
+    // Only show types whose deliveries or OS deviated significantly from their own avg
+    if (prevBucket && histBuckets.length >= 3) {{
+        const typeAnomalies = [];
         const allTypes = new Set([...engByType.keys(), ...osByType.keys()]);
         allTypes.forEach(t => {{
-            if (t === 'Triggered') return;  // skip triggered
+            if (t === 'Triggered') return;
+            const engT = engByType.get(t) || new Map();
             const osT = osByType.get(t) || new Map();
+            const delNow = (engT.get(lastBucket) || {{deliveries:0}}).deliveries;
             const osNow = osT.get(lastBucket) || 0;
-            const osBefore = osT.get(prevBucket) || 0;
-            const delta = osNow - osBefore;
-            if (Math.abs(delta) > 0) typeItems.push({{ name: t, osNow, osBefore, delta }});
+            const avgDel = avgOfBuckets(histBuckets, b => (engT.get(b) || {{deliveries:0}}).deliveries);
+            const avgOsT = avgOfBuckets(histBuckets, b => osT.get(b) || 0);
+
+            const delDev = avgDel && avgDel > 100 ? ((delNow - avgDel) / avgDel) * 100 : null;
+            const osDev = avgOsT && avgOsT > 5 ? ((osNow - avgOsT) / avgOsT) * 100 : null;
+
+            // Only flag if > 25% deviation from avg
+            if (delDev !== null && Math.abs(delDev) > 25) {{
+                typeAnomalies.push({{ name: t, metric: 'deliveries', now: delNow, avg: avgDel, dev: delDev }});
+            }}
+            if (osDev !== null && Math.abs(osDev) > 25) {{
+                typeAnomalies.push({{ name: t, metric: 'OS', now: osNow, avg: avgOsT, dev: osDev }});
+            }}
         }});
-        typeItems.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
-        const movers = typeItems.slice(0, 2).filter(t => Math.abs(t.delta) >= 5);
-        if (movers.length > 0) {{
-            const parts = movers.map(m => {{
-                const sign = m.delta > 0 ? '+' : '';
-                return `${{m.name}} ${{sign}}${{Math.round(m.delta)}} OS`;
-            }});
-            insights.push({{ type: 'info', text: `Biggest ${{pLabel}} movers: ${{parts.join(', ')}}` }});
-        }}
+        typeAnomalies.sort((a, b) => Math.abs(b.dev) - Math.abs(a.dev));
+        typeAnomalies.slice(0, 3).forEach(a => {{
+            const dir = a.dev > 0 ? 'above' : 'below';
+            const type = a.metric === 'OS' ? (a.dev > 0 ? 'positive' : 'negative') : 'info';
+            insights.push({{ type, text: `${{a.name}}: ${{fmtNum(Math.round(a.now))}} ${{a.metric}} (${{a.dev > 0 ? '+':''}}${{a.dev.toFixed(0)}}% vs avg ${{fmtNum(Math.round(a.avg))}})` }});
+        }});
     }}
 
-    // ═══ INSIGHT 3: Top campaign_detail OS drivers (exclude Triggered patterns) ═══
-    {{
-        const detailItems = [];
+    // ═══ INSIGHT 3: Campaign-level anomalies — what specific campaigns drove the change ═══
+    if (prevBucket && histBuckets.length >= 3) {{
+        const detailAnomalies = [];
         const allDetails = new Set([...engByDetail.keys(), ...osByDetail.keys()]);
         allDetails.forEach(d => {{
-            const osD = osByDetail.get(d) || new Map();
             const engD = engByDetail.get(d) || new Map();
-            const osNow = osD.get(lastBucket) || 0;
-            const osBefore = prevBucket ? (osD.get(prevBucket) || 0) : 0;
-            const eNow = engD.get(lastBucket) || {{deliveries:0}};
-            if (eNow.deliveries >= 300 && osNow > 0) {{
-                detailItems.push({{ name: d, os: osNow, delta: osNow - osBefore, deliveries: eNow.deliveries }});
+            const osD = osByDetail.get(d) || new Map();
+            const delNow = (engD.get(lastBucket) || {{deliveries:0}}).deliveries;
+            const avgDel = avgOfBuckets(histBuckets, b => (engD.get(b) || {{deliveries:0}}).deliveries);
+
+            // Show campaigns that deviated > 40% from their avg AND have meaningful volume
+            if (avgDel !== null && avgDel > 200) {{
+                const delDev = ((delNow - avgDel) / avgDel) * 100;
+                const absDelta = delNow - avgDel;
+                if (Math.abs(delDev) > 40 && Math.abs(absDelta) > 1000) {{
+                    const osNow = osD.get(lastBucket) || 0;
+                    detailAnomalies.push({{ name: d, delNow, avgDel, delDev, absDelta, os: osNow }});
+                }}
             }}
         }});
-        // Top OS drivers
-        detailItems.sort((a, b) => b.os - a.os);
-        const topDrivers = detailItems.slice(0, 3);
-        if (topDrivers.length > 0) {{
-            const parts = topDrivers.map(d => `${{d.name}} (${{Math.round(d.os)}} OS)`);
-            insights.push({{ type: 'positive', text: `Top OS drivers: ${{parts.join(', ')}}` }});
-        }}
-        // Biggest drop
-        if (prevBucket) {{
-            detailItems.sort((a, b) => a.delta - b.delta);
-            const dropped = detailItems.filter(d => d.delta < -10);
-            if (dropped.length > 0) {{
-                const worst = dropped[0];
-                insights.push({{ type: 'negative', text: `Notable drop: ${{worst.name}} lost ${{Math.abs(Math.round(worst.delta))}} OS ${{pLabel}} (${{Math.round(worst.os + Math.abs(worst.delta))}} → ${{Math.round(worst.os)}})` }});
-            }}
-        }}
+        detailAnomalies.sort((a, b) => Math.abs(b.absDelta) - Math.abs(a.absDelta));
+        detailAnomalies.slice(0, 2).forEach(a => {{
+            const sign = a.absDelta > 0 ? '+' : '';
+            const type = a.absDelta > 0 ? 'info' : 'negative';
+            const osNote = a.os > 0 ? ` → ${{Math.round(a.os)}} OS` : '';
+            insights.push({{ type, text: `${{a.name}}: ${{fmtNum(a.delNow)}} deliveries (${{sign}}${{fmtNum(Math.round(a.absDelta))}} vs avg)${{osNote}}` }});
+        }});
     }}
 
-    // ═══ INSIGHT 4: MD effect ═══
-    if (mdValLast !== null) {{
-        let mdText = `MD: ${{mdValLast.toFixed(1)}}%`;
-        if (mdValPrev !== null) {{
-            const mdDelta = mdValLast - mdValPrev;
-            if (Math.abs(mdDelta) >= 0.3) {{
-                const mdDir = mdDelta > 0 ? 'up' : 'down';
-                mdText += ` (${{mdDir}} ${{Math.abs(mdDelta).toFixed(1)}}pp ${{pLabel}})`;
-                if (cvrLast !== null && cvrPrev !== null) {{
-                    const cvrDelta = cvrLast - cvrPrev;
-                    if (Math.abs(cvrDelta) >= 0.01) {{
-                        const cvrDir = cvrDelta > 0 ? 'up' : 'down';
-                        mdText += ` — CVR ${{cvrDir}} ${{Math.abs(cvrDelta).toFixed(2)}}pp`;
-                    }}
-                }}
-            }}
-        }}
-        const mdType = mdValPrev !== null && mdValLast > mdValPrev ? 'positive' : mdValPrev !== null && mdValLast < mdValPrev ? 'negative' : 'info';
-        insights.push({{ type: mdType, text: mdText }});
-    }}
+    // ═══ INSIGHT 4: MD effect on conversions ═══
+    if (mdValLast !== null && mdValPrev !== null) {{
+        const mdDelta = mdValLast - mdValPrev;
+        if (Math.abs(mdDelta) >= 0.3) {{
+            // MD down = good (inverted)
+            const mdType = mdDelta < 0 ? 'positive' : 'negative';
+            let mdText = `MD ${{mdDelta < 0 ? 'improved' : 'worsened'}}: ${{mdValLast.toFixed(1)}}% (${{mdDelta > 0 ? '+':''}}${{mdDelta.toFixed(1)}}pp ${{pLabel}})`;
 
-    // ═══ INSIGHT 5: CPOS + CTR ═══
-    {{
-        const parts = [];
-        if (cposLast !== null) {{
-            let cpText = `CPOS ${{fmtMoney(cposLast)}}`;
-            if (cposPrev !== null) {{
+            // Correlate with CVR and CPOS
+            const effects = [];
+            if (cvrLast !== null && cvrPrev !== null) {{
+                const cvrDelta = cvrLast - cvrPrev;
+                if (Math.abs(cvrDelta) >= 0.005) effects.push(`CVR ${{cvrDelta > 0 ? '+':''}}${{(cvrDelta).toFixed(3)}}pp`);
+            }}
+            if (cposLast !== null && cposPrev !== null) {{
                 const cposChg = wowChange(cposLast, cposPrev);
-                if (cposChg !== null && Math.abs(cposChg) >= 2) {{
-                    cpText += ` (${{cposChg > 0 ? '+' : ''}}${{cposChg.toFixed(1)}}% ${{pLabel}})`;
-                }}
+                if (Math.abs(cposChg) >= 3) effects.push(`CPOS ${{cposChg > 0 ? '+':''}}${{cposChg.toFixed(0)}}%`);
             }}
-            parts.push(cpText);
-        }}
-        if (ctrLast !== null) {{
-            let ctrText = `CTR ${{ctrLast.toFixed(2)}}%`;
-            if (ctrPrev !== null) {{
-                const ctrDelta = ctrLast - ctrPrev;
-                if (Math.abs(ctrDelta) >= 0.02) {{
-                    ctrText += ` (${{ctrDelta > 0 ? '+' : ''}}${{ctrDelta.toFixed(2)}}pp ${{pLabel}})`;
-                }}
-            }}
-            parts.push(ctrText);
-        }}
-        if (parts.length > 0) {{
-            const cposDir = cposPrev !== null && cposLast !== null ? (cposLast < cposPrev ? 'positive' : cposLast > cposPrev ? 'negative' : 'info') : 'info';
-            insights.push({{ type: cposDir, text: parts.join(' · ') }});
+            if (effects.length > 0) mdText += ` — effect: ${{effects.join(', ')}}`;
+            insights.push({{ type: mdType, text: mdText }});
         }}
     }}
 
-    // ═══ INSIGHT 6: Next steps ═══
+    // ═══ INSIGHT 5: CPOS/CTR anomalies (only if they deviated significantly) ═══
+    {{
+        const avgCpos = avgOfBuckets(histBuckets, b => {{
+            const o = osMap.get(b) || 0;
+            const dc = delByCh.get(b) || {{wa_del:0, email_del:0}};
+            const c = calcCost(dc);
+            return o > 0 ? c / o : null;
+        }});
+        const avgCtr = avgOfBuckets(histBuckets, b => {{
+            const e = eng.get(b) || {{deliveries:0, clicks:0}};
+            return e.deliveries > 0 ? (e.clicks / e.deliveries) * 100 : null;
+        }});
+        const flags = [];
+        if (cposLast !== null && avgCpos !== null) {{
+            const cposDev = wowChange(cposLast, avgCpos);
+            if (Math.abs(cposDev) > 10) {{
+                // CPOS: inverted (up = bad)
+                flags.push({{ text: `CPOS ${{fmtMoney(cposLast)}} (${{cposDev > 0 ? '+':''}}${{cposDev.toFixed(0)}}% vs avg ${{fmtMoney(avgCpos)}})`, bad: cposDev > 0 }});
+            }}
+        }}
+        if (ctrLast !== null && avgCtr !== null) {{
+            const ctrDev = ctrLast - avgCtr;
+            if (Math.abs(ctrDev) > 0.1) {{
+                flags.push({{ text: `CTR ${{ctrLast.toFixed(2)}}% (${{ctrDev > 0 ? '+':''}}${{ctrDev.toFixed(2)}}pp vs avg ${{avgCtr.toFixed(2)}}%)`, bad: ctrDev < 0 }});
+            }}
+        }}
+        flags.forEach(f => insights.push({{ type: f.bad ? 'negative' : 'positive', text: f.text }}));
+    }}
+
+    // ═══ INSIGHT 6: Next steps (contextual, based on what anomalies were detected) ═══
     {{
         const actions = [];
-        // If CPOS went up, suggest review
         if (cposLast !== null && cposPrev !== null && cposLast > cposPrev * 1.10) {{
-            actions.push('review high-cost campaigns to reduce CPOS');
+            actions.push('CPOS up — review which campaign types are driving cost increase');
         }}
-        // If OS dropped, suggest checking volume drivers
         if (osPrev !== null && osLast < osPrev * 0.90) {{
-            actions.push('investigate OS drop — check if volume or efficiency changed');
+            actions.push('OS dropped significantly — check if a campaign was paused or if efficiency decreased');
         }}
-        // If CTR dropped significantly
-        if (ctrLast !== null && ctrPrev !== null && ctrLast < ctrPrev - 0.1) {{
-            actions.push('CTR dropped — review creatives and messaging');
+        if (ctrLast !== null && ctrPrev !== null && ctrLast < ctrPrev * 0.85) {{
+            actions.push('CTR declining — review creatives, subject lines, and messaging');
         }}
-        // If MD improved but CVR didn't follow
         if (mdValLast !== null && mdValPrev !== null && mdValLast > mdValPrev + 0.5 && cvrLast !== null && cvrPrev !== null && cvrLast <= cvrPrev) {{
-            actions.push('MD improved but CVR flat — check if supply quality is matching demand');
+            actions.push('MD worsened but CVR flat — demand may be absorbing worse deals, monitor closely');
+        }}
+        if (mdValLast !== null && mdValPrev !== null && mdValLast < mdValPrev - 0.5 && cvrLast !== null && cvrPrev !== null && cvrLast < cvrPrev) {{
+            actions.push('MD improved but CVR dropped — efficiency may be declining despite better pricing');
         }}
         if (actions.length > 0) {{
-            insights.push({{ type: 'info', text: `Next steps: ${{actions.join('; ')}}` }});
+            insights.push({{ type: 'info', text: `Next steps: ${{actions.join(' | ')}}` }});
         }}
     }}
 
