@@ -19,11 +19,8 @@ Usage: python generate_supply_dashboard.py
 """
 
 import sys
-sys.path.insert(0, '/Users/mateolundahl/.claude/skills/kavak-analytics')
-
 import json
 import os
-import pathlib
 from datetime import datetime, timedelta
 import webbrowser
 
@@ -32,7 +29,7 @@ import numpy as np
 from query_runner import execute_query
 
 # ─── Configuration ───────────────────────────────────────────────────────────
-OUTPUT_PATH = str(pathlib.Path(__file__).parent / "index.html")
+OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")
 NUM_WEEKS = 26
 WA_COST_MXN = 0.40
 EMAIL_COST_MXN = 0.02
@@ -638,6 +635,21 @@ body {{
     border-color: var(--kavak-blue);
     color: #fff;
 }}
+/* ── Period Select Dropdown ── */
+.period-select {{
+    padding: 4px 10px;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    border: 1px solid var(--kavak-border);
+    background: var(--kavak-bg);
+    color: var(--kavak-text);
+    cursor: pointer;
+    outline: none;
+    min-width: 90px;
+}}
+.period-select:hover {{ border-color: var(--kavak-blue); }}
+.period-select:focus {{ border-color: var(--kavak-blue); box-shadow: 0 0 0 2px rgba(4,103,252,0.2); }}
 .pill.active-wa {{
     background: var(--wa-color);
     border-color: var(--wa-color);
@@ -911,6 +923,111 @@ td[data-wow] {{ cursor: default; position: relative; }}
 }}
 .watermark svg {{ width: 50px; height: auto; fill: #fff; }}
 .watermark span {{ font-size: 9px; text-transform: uppercase; letter-spacing: 2px; color: #fff; font-weight: 600; }}
+/* ── Combiner Panel ── */
+.combiner-btn {{
+    padding: 5px 14px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--kavak-border);
+    background: transparent;
+    color: var(--kavak-text-sec);
+    transition: all 0.15s;
+}}
+.combiner-btn:hover {{ border-color: #A855F7; color: #A855F7; }}
+.combiner-btn.active {{ background: #A855F7; border-color: #A855F7; color: #fff; }}
+.combiner-overlay {{
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 999;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 80px;
+    backdrop-filter: blur(4px);
+}}
+.combiner-overlay.show {{ display: flex; }}
+.combiner-panel {{
+    background: #1e1e2e;
+    border: 1px solid rgba(168,85,247,0.3);
+    border-radius: 12px;
+    padding: 24px 28px;
+    width: 440px;
+    max-height: 70vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.6), 0 0 0 1px rgba(168,85,247,0.15);
+}}
+.combiner-panel h3 {{
+    margin: 0 0 12px 0;
+    font-size: 14px;
+    color: var(--kavak-text);
+}}
+.combiner-group {{
+    margin-bottom: 12px;
+}}
+.combiner-group-title {{
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--kavak-text-sec);
+    margin-bottom: 6px;
+}}
+.combiner-item {{
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--kavak-text);
+}}
+.combiner-item input[type="checkbox"] {{
+    accent-color: #A855F7;
+    width: 14px;
+    height: 14px;
+}}
+.combiner-item .color-dot {{
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}}
+.combiner-actions {{
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--kavak-border);
+}}
+.combiner-create {{
+    flex: 1;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    border: none;
+    background: #A855F7;
+    color: #fff;
+    transition: opacity 0.15s;
+}}
+.combiner-create:hover {{ opacity: 0.85; }}
+.combiner-create:disabled {{ opacity: 0.4; cursor: default; }}
+.combiner-cancel {{
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--kavak-border);
+    background: transparent;
+    color: var(--kavak-text-sec);
+}}
+.combiner-cancel:hover {{ border-color: var(--kavak-text); color: var(--kavak-text); }}
+
 .footer {{
     text-align: center;
     padding: 24px;
@@ -965,6 +1082,22 @@ td[data-wow] {{ cursor: default; position: relative; }}
             <button class="pill active" data-filter="time" data-value="week" onclick="setFilter('time','week',this)">Week</button>
             <button class="pill" data-filter="time" data-value="month" onclick="setFilter('time','month',this)">Month</button>
             <button class="pill" data-filter="time" data-value="quarter" onclick="setFilter('time','quarter',this)">Quarter</button>
+        </div>
+        <div class="filter-group">
+            <span class="filter-label">Range:</span>
+            <button class="pill" data-filter="range" data-value="4" onclick="setFilter('range','4',this)">4W</button>
+            <button class="pill" data-filter="range" data-value="8" onclick="setFilter('range','8',this)">8W</button>
+            <button class="pill" data-filter="range" data-value="12" onclick="setFilter('range','12',this)">12W</button>
+            <button class="pill active" data-filter="range" data-value="all" onclick="setFilter('range','all',this)">All</button>
+        </div>
+        <div class="filter-group">
+            <span class="filter-label">Period:</span>
+            <select class="period-select" id="period-select" onchange="setPeriod(this.value)">
+                <option value="latest">Latest</option>
+            </select>
+        </div>
+        <div class="filter-group" style="margin-left:auto;">
+            <button class="combiner-btn" id="combiner-toggle" onclick="toggleCombiner()">&#128202; Custom Chart</button>
         </div>
     </div>
     <div class="tab-bar" style="margin-top:12px;">
@@ -1123,6 +1256,18 @@ td[data-wow] {{ cursor: default; position: relative; }}
     </div>
 </div>
 
+<!-- Combiner Panel -->
+<div class="combiner-overlay" id="combiner-overlay" onclick="if(event.target===this)closeCombiner()">
+    <div class="combiner-panel" onclick="event.stopPropagation()">
+        <h3>&#128202; Custom Chart Builder</h3>
+        <div id="combiner-metrics"></div>
+        <div class="combiner-actions">
+            <button class="combiner-create" id="combiner-create-btn" onclick="createCombinedChart()" disabled>Create Chart</button>
+            <button class="combiner-cancel" onclick="closeCombiner()">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <!-- Watermark -->
 <div class="watermark">
     <svg viewBox="0 0 7774 2048"><path d="M7296.82.052L6752.798 1024l544.022 1023.948h477.424L7239.034 1024 7774.244.052zm-1130.746 0v1705.534L5275.298.052 4205.476 2047.954h470.514l599.916-1147.71 254.406 487.47h-254.406l-178.412 341.108h611.236l166.464 319.132h726.816V.052h-435.96zm-1767.734 0l-599.916 1147.71L3199.138.052h-470.514l1069.822 2047.902L4868.268.052H4398.39zm-2076.172 0l-892.04 1707.424L1072.7 1024 1607.91.052h-477.424L586.464 1024l544.022 1023.948h593.006l166.464-319.132h611.236l-178.412-341.108h-254.406l254.406-487.47 598.678 1147.71h470.514L2322.15.046zM-.244 2047.952h435.33V.05H-.244z"/></svg>
@@ -1149,6 +1294,8 @@ const STATE = {{
     channel: 'whatsapp',   // 'whatsapp', 'email', 'both'
     vertical: 'supply',    // 'supply', 'spillover'
     time: 'week',          // 'week', 'month', 'quarter'
+    range: 'all',          // 'all', '4', '8', '12'
+    selectedPeriod: null,  // null = latest
 }};
 
 // Chart instances for cleanup
@@ -1173,7 +1320,46 @@ function setFilter(group, value, btn) {{
     }} else {{
         btn.className = 'pill active';
     }}
+    // Reset period selection when time grouping changes, update range labels
+    if (group === 'time') {{
+        STATE.selectedPeriod = null;
+        updateRangeLabels();
+    }}
     renderAll();
+}}
+
+function setPeriod(value) {{
+    STATE.selectedPeriod = value === 'latest' ? null : value;
+    renderAll();
+}}
+
+function populatePeriodDropdown(buckets) {{
+    const sel = document.getElementById('period-select');
+    if (!sel) return;
+    const prev = sel.value;
+    sel.innerHTML = '<option value="latest">Latest</option>';
+    // Show periods in reverse order (most recent first)
+    [...buckets].reverse().forEach(b => {{
+        const opt = document.createElement('option');
+        opt.value = b;
+        opt.textContent = timeLabel(b);
+        sel.appendChild(opt);
+    }});
+    // Restore selection if still valid
+    if (STATE.selectedPeriod && buckets.includes(STATE.selectedPeriod)) {{
+        sel.value = STATE.selectedPeriod;
+    }} else {{
+        sel.value = 'latest';
+        STATE.selectedPeriod = null;
+    }}
+}}
+
+function updateRangeLabels() {{
+    const suffix = STATE.time === 'week' ? 'W' : STATE.time === 'month' ? 'M' : 'Q';
+    document.querySelectorAll('[data-filter="range"]').forEach(btn => {{
+        const val = btn.getAttribute('data-value');
+        if (val !== 'all') btn.textContent = val + suffix;
+    }});
 }}
 
 function channelLabel() {{
@@ -1468,7 +1654,7 @@ function yAxisCallbackPct(value) {{
 // SORTED BUCKETS (time periods)
 // ════════════════════════════════════════════════════════════════════════════
 
-function getSortedBuckets() {{
+function getAllBuckets() {{
     const buckets = new Set();
     (RAW.engagement_all || []).forEach(r => buckets.add(timeBucket(r.week)));
     (RAW.os_weekly || []).forEach(r => buckets.add(timeBucket(r.week)));
@@ -1483,6 +1669,18 @@ function getSortedBuckets() {{
         const now = new Date();
         const curQ = now.getFullYear() + '-Q' + Math.ceil((now.getMonth()+1)/3);
         sorted = sorted.filter(b => b < curQ);
+    }}
+    return sorted;
+}}
+
+function getSortedBuckets() {{
+    let sorted = getAllBuckets();
+    // Apply range filter
+    if (STATE.range !== 'all') {{
+        const n = parseInt(STATE.range);
+        if (n > 0 && sorted.length > n) {{
+            sorted = sorted.slice(-n);
+        }}
     }}
     return sorted;
 }}
@@ -1531,6 +1729,42 @@ function createSparkline(canvas, values, color) {{
         }}
     }});
 }}
+
+// ── Plugin: highlight selected period on all charts ──
+const periodHighlightPlugin = {{
+    id: 'periodHighlight',
+    beforeDraw(chart) {{
+        if (!STATE.selectedPeriod) return;
+        const xScale = chart.scales.x;
+        if (!xScale) return;
+        const labels = chart.data.labels || [];
+        const selLabel = timeLabel(STATE.selectedPeriod);
+        const idx = labels.indexOf(selLabel);
+        if (idx < 0) return;
+
+        const ctx = chart.ctx;
+        const meta = chart.getDatasetMeta(0);
+        if (!meta || !meta.data || !meta.data[idx]) return;
+
+        const x = meta.data[idx].x;
+        const halfW = labels.length > 1 && meta.data.length > 1
+            ? Math.abs(meta.data[Math.min(idx+1, meta.data.length-1)].x - meta.data[Math.max(idx-1, 0)].x) / (idx === 0 || idx === meta.data.length-1 ? 2 : 2)
+            : 20;
+        const top = chart.chartArea.top;
+        const bottom = chart.chartArea.bottom;
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(168, 85, 247, 0.12)';
+        ctx.fillRect(x - halfW/2, top, halfW, bottom - top);
+        // Small label at top
+        ctx.fillStyle = 'rgba(168, 85, 247, 0.6)';
+        ctx.font = '9px Inter';
+        ctx.textAlign = 'center';
+        ctx.fillText('▼', x, top + 8);
+        ctx.restore();
+    }}
+}};
+Chart.register(periodHighlightPlugin);
 
 const CHART_DEFAULTS = {{
     responsive: true,
@@ -1599,6 +1833,139 @@ const CHART_DEFAULTS = {{
 }};
 
 // ════════════════════════════════════════════════════════════════════════════
+// METRIC COMBINER — Registry & Logic
+// ════════════════════════════════════════════════════════════════════════════
+
+const METRIC_REGISTRY = [
+    // ── Volumes ──
+    {{ id: 'deliveries', label: 'Deliveries', group: 'Volumes', unit: 'number', color: '#0467FC',
+       extract: (buckets) => {{
+           const eng = aggregateEngagement(RAW.engagement_all);
+           return buckets.map(b => {{ const e = eng.get(b); return e ? e.deliveries : 0; }});
+       }}
+    }},
+    {{ id: 'os', label: 'OS', group: 'Volumes', unit: 'number', color: '#00C48C',
+       extract: (buckets) => {{
+           const osMap = aggregateOS(RAW.os_weekly);
+           return buckets.map(b => osMap.get(b) || 0);
+       }}
+    }},
+    {{ id: 'md', label: 'MD%', group: 'Volumes', unit: 'pct', color: '#FF4757',
+       extract: (buckets) => {{
+           const mdMap = aggregateMD(RAW.md_weekly);
+           return buckets.map(b => {{ const m = mdMap.get(b); return m && m.count > 0 ? m.sum / m.count : null; }});
+       }}
+    }},
+    // ── Rates ──
+    {{ id: 'or', label: 'OR%', group: 'Rates', unit: 'pct', color: '#FF9F43',
+       extract: (buckets) => {{
+           const eng = aggregateEngagement(RAW.engagement_all);
+           return buckets.map(b => {{ const e = eng.get(b); return e && e.deliveries > 0 ? safePct(e.opens, e.deliveries) : null; }});
+       }}
+    }},
+    {{ id: 'ctr', label: 'CTR%', group: 'Rates', unit: 'pct', color: '#A855F7',
+       extract: (buckets) => {{
+           const eng = aggregateEngagement(RAW.engagement_all);
+           return buckets.map(b => {{ const e = eng.get(b); return e && e.deliveries > 0 ? safePct(e.clicks, e.deliveries) : null; }});
+       }}
+    }},
+    {{ id: 'cvr', label: 'CVR%', group: 'Rates', unit: 'pct', color: '#0467FC',
+       extract: (buckets) => {{
+           const eng = aggregateEngagement(RAW.engagement_all);
+           const osMap = aggregateOS(RAW.os_weekly);
+           return buckets.map(b => {{ const e = eng.get(b); const o = osMap.get(b) || 0; return e && e.deliveries > 0 ? safePct(o, e.deliveries) : null; }});
+       }}
+    }},
+    // ── Efficiency ──
+    {{ id: 'cpos', label: 'CPOS ($)', group: 'Efficiency', unit: 'money', color: '#FF9F43',
+       extract: (buckets) => {{
+           const delByCh = aggregateDeliveriesByChannel(RAW.engagement_all);
+           const osMap = aggregateOS(RAW.os_weekly);
+           return buckets.map(b => {{
+               const dc = delByCh.get(b) || {{wa_del:0, email_del:0}};
+               const o = osMap.get(b) || 0;
+               let cost = 0;
+               if (STATE.channel === 'whatsapp' || STATE.channel === 'both') cost += dc.wa_del * RAW.wa_cost;
+               if (STATE.channel === 'email' || STATE.channel === 'both') cost += dc.email_del * RAW.email_cost;
+               return o > 0 ? cost / o : null;
+           }});
+       }}
+    }},
+    {{ id: 'os_per_1k', label: 'OS/1K Del', group: 'Efficiency', unit: 'number', color: '#00C48C',
+       extract: (buckets) => {{
+           const eng = aggregateEngagement(RAW.engagement_all);
+           const osMap = aggregateOS(RAW.os_weekly);
+           return buckets.map(b => {{ const e = eng.get(b); const o = osMap.get(b) || 0; return e && e.deliveries > 0 ? (o / e.deliveries * 1000) : null; }});
+       }}
+    }},
+    // ── Saturation ──
+    {{ id: 'avg_wa_user', label: 'Avg WA/User', group: 'Saturation', unit: 'number', color: '#FF9F43',
+       extract: (buckets) => {{
+           const sat = aggSatFreq();
+           return buckets.map(b => {{ const r = sat.find(s => timeBucket(s.week) === b); return r ? r.avg_sends_per_impacted : null; }});
+       }}
+    }},
+    {{ id: 'pct_impacted', label: '% Impacted (WA)', group: 'Saturation', unit: 'pct', color: '#00C48C',
+       extract: (buckets) => {{
+           const sat = aggSatFreq();
+           return buckets.map(b => {{ const r = sat.find(s => timeBucket(s.week) === b); return r ? r.pct_impacted : null; }});
+       }}
+    }},
+];
+
+let combinerSelections = new Set();
+
+function buildCombinerPanel() {{
+    const container = document.getElementById('combiner-metrics');
+    if (!container) return;
+    container.innerHTML = '';
+    const groups = {{}};
+    METRIC_REGISTRY.forEach(m => {{
+        if (!groups[m.group]) groups[m.group] = [];
+        groups[m.group].push(m);
+    }});
+    Object.keys(groups).forEach(g => {{
+        const div = document.createElement('div');
+        div.className = 'combiner-group';
+        div.innerHTML = `<div class="combiner-group-title">${{g}}</div>`;
+        groups[g].forEach(m => {{
+            const item = document.createElement('label');
+            item.className = 'combiner-item';
+            item.innerHTML = `<input type="checkbox" value="${{m.id}}" ${{combinerSelections.has(m.id) ? 'checked' : ''}} onchange="toggleCombinerMetric('${{m.id}}', this.checked)"><span class="color-dot" style="background:${{m.color}}"></span>${{m.label}}`;
+            div.appendChild(item);
+        }});
+        container.appendChild(div);
+    }});
+}}
+
+function toggleCombinerMetric(id, checked) {{
+    if (checked) combinerSelections.add(id);
+    else combinerSelections.delete(id);
+    const btn = document.getElementById('combiner-create-btn');
+    if (btn) btn.disabled = combinerSelections.size < 2;
+}}
+
+function toggleCombiner() {{
+    const overlay = document.getElementById('combiner-overlay');
+    if (overlay.classList.contains('show')) {{
+        closeCombiner();
+    }} else {{
+        buildCombinerPanel();
+        overlay.classList.add('show');
+        document.getElementById('combiner-toggle').classList.add('active');
+    }}
+}}
+
+function closeCombiner() {{
+    document.getElementById('combiner-overlay').classList.remove('show');
+    document.getElementById('combiner-toggle').classList.remove('active');
+}}
+
+function createCombinedChart() {{
+    closeCombiner();
+    openModal('combiner');
+}}
+
 // ════════════════════════════════════════════════════════════════════════════
 // CAMPAIGN TYPE DEFINITIONS (for hover tooltips)
 // ════════════════════════════════════════════════════════════════════════════
@@ -1657,6 +2024,9 @@ function switchTab(tab, btn) {{
 function renderAll() {{
     const buckets = getSortedBuckets();
     const labels = buckets.map(b => timeLabel(b));
+
+    // Populate period dropdown with current buckets
+    populatePeriodDropdown(buckets);
 
     // Update metadata
     document.getElementById('gen-time').textContent = RAW.generated_at || '';
@@ -1724,9 +2094,15 @@ function renderKPIs(buckets, labels) {{
     const ctrArr = deliveries.map((d, i) => d > 0 ? safePct(clicks[i], d) : null);
     const cvrArr = deliveries.map((d, i) => d > 0 ? safePct(osArr[i], d) : null);
 
-    // Find last complete period (exclude WTD if present)
+    // Find the selected period (or last complete period)
     let lastIdx = buckets.length - 1;
-    if (wtdFlags[lastIdx] && buckets.length >= 2) lastIdx = buckets.length - 2;
+    if (STATE.selectedPeriod) {{
+        const selIdx = buckets.indexOf(STATE.selectedPeriod);
+        if (selIdx >= 0) lastIdx = selIdx;
+    }} else {{
+        // Default: last complete period (exclude WTD if present)
+        if (wtdFlags[lastIdx] && buckets.length >= 2) lastIdx = buckets.length - 2;
+    }}
     const prevIdx = lastIdx - 1;
 
     // AVG L8W: average of up to 8 periods before current (excluding WTD)
@@ -3016,6 +3392,82 @@ function openModal(chartType) {{
                          title: {{ display: true, text: '% Repetition', color: 'rgba(255,255,255,0.4)', font: {{ size: 11 }} }} }},
                     y1: {{ ...CHART_DEFAULTS.scales.y, position: 'right', grid: {{ drawOnChartArea: false }},
                           title: {{ display: true, text: 'Users', color: 'rgba(255,255,255,0.4)', font: {{ size: 11 }} }} }},
+                }}
+            }}
+        }};
+    }}
+
+    // ── Combiner: custom multi-metric chart — each metric gets its own Y-axis ──
+    if (chartType === 'combiner' && combinerSelections.size >= 2) {{
+        const selected = METRIC_REGISTRY.filter(m => combinerSelections.has(m.id));
+        const datasets = [];
+        const scales = {{ x: CHART_DEFAULTS.scales.x }};
+
+        // Each metric gets its own Y-axis for independent scaling
+        selected.forEach((m, i) => {{
+            const data = m.extract(buckets);
+            const axisId = 'y_' + i;
+            const isLeft = i === 0;  // First metric on left, rest on right
+
+            datasets.push({{
+                label: m.label,
+                data: data,
+                borderColor: m.color,
+                backgroundColor: m.color + '22',
+                borderWidth: 2.5,
+                fill: false,
+                tension: 0.3,
+                pointRadius: 4,
+                pointHoverRadius: 6,
+                yAxisID: axisId,
+            }});
+
+            const tickCb = m.unit === 'pct' ? yAxisCallbackPct
+                         : m.unit === 'money' ? (v => '$' + yAxisCallback(v))
+                         : yAxisCallback;
+
+            scales[axisId] = {{
+                type: 'linear',
+                position: isLeft ? 'left' : 'right',
+                display: i < 4,  // Show max 4 axes (hide rest but keep scaling)
+                grid: {{ drawOnChartArea: isLeft, color: isLeft ? 'rgba(255,255,255,0.04)' : 'transparent' }},
+                ticks: {{
+                    color: m.color + 'CC',
+                    font: {{ family: 'Inter', size: 10 }},
+                    callback: tickCb,
+                    maxTicksLimit: 6,
+                }},
+                title: {{
+                    display: i < 4,
+                    text: m.label,
+                    color: m.color + 'AA',
+                    font: {{ size: 10 }},
+                }},
+                beginAtZero: m.unit !== 'pct',
+            }};
+        }});
+
+        config = {{
+            type: 'line',
+            data: {{ labels, datasets }},
+            options: {{
+                ...CHART_DEFAULTS,
+                scales,
+                plugins: {{
+                    ...CHART_DEFAULTS.plugins,
+                    tooltip: {{
+                        ...CHART_DEFAULTS.plugins.tooltip,
+                        callbacks: {{
+                            label: function(ctx) {{
+                                const m = selected[ctx.datasetIndex];
+                                const val = ctx.parsed.y;
+                                if (val === null || val === undefined) return m.label + ': --';
+                                if (m.unit === 'pct') return m.label + ': ' + val.toFixed(2) + '%';
+                                if (m.unit === 'money') return m.label + ': $' + val.toFixed(2);
+                                return m.label + ': ' + fmtNum(val);
+                            }}
+                        }}
+                    }}
                 }}
             }}
         }};
